@@ -34,8 +34,8 @@ class PersonCounter:
         # Màu sắc
         self.color_in = (0, 255, 0)  # Xanh lá (IN)
         self.color_out = (0, 0, 255)  # Đỏ (OUT)
-        self.color_box_left_right = (255, 0, 255)  # Tím (đi từ trái sang phải)
-        self.color_box_right_left = (0, 165, 255)  # Cam (đi từ phải sang trái)
+        self.color_box_left_right = (0, 255, 0)  # Xanh lá (đi từ trái sang phải)
+        self.color_box_right_left = (0, 0, 255)  # Đỏ (đi từ phải sang trái)
         self.color_box_default = (255, 0, 0)  # Xanh dương (mặc định)
         
         # Video recording
@@ -46,12 +46,12 @@ class PersonCounter:
     def setup_lines(self, frame_width):
         """
         Thiết lập vị trí các đường đếm IN và OUT (dọc)
-        - OUT: Ở 1/5 từ trái (bên trái), đếm khi người đi từ phải sang trái qua vạch OUT (ra khỏi siêu thị)
+        - OUT: Ở 1/4 từ trái (bên trái), đếm khi người đi từ phải sang trái qua vạch OUT (ra khỏi siêu thị)
         - IN: Ở 0.7 từ trái (bên phải), đếm khi người đi từ trái sang phải qua vạch IN (vào siêu thị)
         """
         if self.line_out_x is None:
-            # Đường OUT ở 1/5 từ trái (bên trái) - người đi ra từ phải sang trái
-            self.line_out_x = int(frame_width * 1/5)
+            # Đường OUT ở 1/4 từ trái (bên trái) - người đi ra từ phải sang trái
+            self.line_out_x = int(frame_width * 1/4)
         if self.line_in_x is None:
             # Đường IN ở 0.7 từ trái (bên phải) - người đi vào từ trái sang phải
             self.line_in_x = int(frame_width * 0.7)
@@ -91,7 +91,7 @@ class PersonCounter:
                     bbox = boxes.xyxy[i].cpu().numpy()
                     conf = float(boxes.conf[i].cpu().numpy())
                     
-                    if conf > 0.6:  # Tăng ngưỡng confidence để bắt người chuẩn hơn
+                    if conf > 0.4:  # Giảm ngưỡng confidence để bắt được nhiều người hơn
                         centroid = self.calculate_centroid(bbox)
                         current_centroids[i] = {
                             'centroid': centroid,
@@ -152,10 +152,10 @@ class PersonCounter:
                 iou = calculate_iou(old_bbox, new_bbox)
                 
                 # Tính điểm số kết hợp (ưu tiên IoU cao và khoảng cách gần)
-                # Nếu IoU > 0.3 hoặc khoảng cách < 150 pixels
-                max_distance = 150  # Tăng ngưỡng để tracking tốt hơn
+                # Nếu IoU > 0.15 hoặc khoảng cách < 250 pixels
+                max_distance = 250  # Tăng ngưỡng để tracking tốt hơn khi nhiều người
                 
-                if iou > 0.3:
+                if iou > 0.15:
                     # Nếu IoU cao, ưu tiên IoU
                     score = iou * 2
                 elif distance < max_distance:
@@ -168,7 +168,7 @@ class PersonCounter:
                     best_score = score
                     best_match_id = old_id
             
-            if best_match_id is not None and best_score > 0.1:  # Ngưỡng tối thiểu
+            if best_match_id is not None and best_score > 0.03:  # Giảm ngưỡng để matching tốt hơn, bắt được nhiều người hơn
                 matched_ids[new_id] = best_match_id
                 used_ids.add(best_match_id)
             else:
@@ -207,37 +207,49 @@ class PersonCounter:
                 # Kiểm tra đường IN (từ trái sang phải - đi vào siêu thị)
                 # IN ở bên phải, đếm khi người đi từ trái sang phải qua vạch IN
                 if prev_x < self.line_in_x and current_x >= self.line_in_x:
-                    # Chỉ đếm nếu di chuyển đủ xa (tránh nhảy ID) và chưa đi vào hoặc đã đi ra
-                    if movement_distance > 5 and (not last_in or last_out):
+                    # Chỉ đếm nếu chưa đi vào hoặc đã đi ra (giảm ngưỡng movement để bắt được nhiều hơn)
+                    if movement_distance > 2 and (not last_in or last_out):
                         self.in_count += 1
                         direction = 'IN'
-                        print(f"Người {track_id} đi vào! IN: {self.in_count}")
+                        print(f"Người {track_id} đi vào! IN: {self.in_count} (prev_x={prev_x:.1f}, current_x={current_x:.1f}, line={self.line_in_x})")
                     last_in = True
                     last_out = False
                 
                 # Kiểm tra đường OUT (từ phải sang trái - đi ra khỏi siêu thị)
                 # OUT ở bên trái, đếm khi người đi từ phải sang trái qua vạch OUT
                 if prev_x > self.line_out_x and current_x <= self.line_out_x:
-                    # Đếm nếu di chuyển đủ xa và chưa đi ra (để tránh đếm trùng)
-                    if movement_distance > 5 and not last_out:
+                    # Đếm nếu chưa đi ra (giảm ngưỡng movement để bắt được nhiều hơn)
+                    if movement_distance > 2 and not last_out:
                         self.out_count += 1
                         direction = 'OUT'
-                        print(f"Người {track_id} đi ra! OUT: {self.out_count}")
+                        print(f"Người {track_id} đi ra! OUT: {self.out_count} (prev_x={prev_x:.1f}, current_x={current_x:.1f}, line={self.line_out_x})")
                     last_out = True
                     last_in = False  # Sau khi đi ra, không còn trong khu vực
             
-            # Xác định hướng di chuyển dựa trên vị trí trước và hiện tại
+            # Xác định hướng di chuyển dựa trên vị trí trước và hiện tại (ổn định, không nhảy)
             movement_direction = None
+            if track_id in self.tracks:
+                # Lấy hướng di chuyển trước đó
+                old_movement = self.tracks[track_id].get('movement_direction', None)
+                movement_direction = old_movement  # Giữ nguyên hướng cũ mặc định
+            
             if prev_x is not None:
-                if current_x > prev_x:
-                    movement_direction = 'left_to_right'  # Trái sang phải
-                elif current_x < prev_x:
-                    movement_direction = 'right_to_left'  # Phải sang trái
-                else:
-                    # Giữ nguyên hướng di chuyển trước đó nếu có
-                    if track_id in self.tracks:
-                        old_movement = self.tracks[track_id].get('movement_direction', None)
-                        movement_direction = old_movement
+                # Tính khoảng cách di chuyển
+                movement_threshold = 20  # Tăng ngưỡng để màu ổn định hơn, không nhảy
+                
+                # Chỉ thay đổi hướng khi di chuyển rõ ràng và liên tục
+                if abs(current_x - prev_x) > movement_threshold:
+                    # Xác định hướng di chuyển rõ ràng
+                    if current_x > prev_x + movement_threshold:
+                        # Chỉ đổi sang trái->phải nếu chưa có hướng hoặc đang là trái->phải
+                        if movement_direction is None or movement_direction == 'left_to_right':
+                            movement_direction = 'left_to_right'  # Trái sang phải
+                    elif current_x < prev_x - movement_threshold:
+                        # Chỉ đổi sang phải->trái nếu chưa có hướng hoặc đang là phải->trái
+                        if movement_direction is None or movement_direction == 'right_to_left':
+                            movement_direction = 'right_to_left'  # Phải sang trái
+                    # Nếu di chuyển trong ngưỡng, giữ nguyên hướng cũ (không thay đổi)
+                # Nếu không có prev_x hoặc di chuyển nhỏ, giữ nguyên hướng cũ
             
             updated_tracks[track_id] = {
                 'centroid': centroid,
@@ -273,26 +285,20 @@ class PersonCounter:
     def draw_detections(self, frame):
         """
         Vẽ bounding boxes và thông tin tracking lên frame
-        Màu sắc bounding box dựa trên hướng di chuyển
+        Màu sắc bounding box đồng nhất
         """
         for track_id, track_data in self.tracks.items():
             bbox = track_data['bbox']
             centroid = track_data['centroid']
             conf = track_data['conf']
             direction = track_data.get('direction', None)
-            movement_direction = track_data.get('movement_direction', None)
             
             x1, y1, x2, y2 = map(int, bbox)
             
-            # Chọn màu bounding box dựa trên hướng di chuyển
-            if movement_direction == 'left_to_right':
-                box_color = self.color_box_left_right  # Tím - trái sang phải
-            elif movement_direction == 'right_to_left':
-                box_color = self.color_box_right_left  # Cam - phải sang trái
-            else:
-                box_color = self.color_box_default  # Xanh dương - mặc định
+            # Sử dụng một màu duy nhất cho tất cả bounding box
+            box_color = (255, 0, 0)  # Xanh dương - màu duy nhất
             
-            # Vẽ bounding box với màu theo hướng di chuyển
+            # Vẽ bounding box với màu đồng nhất
             cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3)
             
             # Vẽ centroid
@@ -383,6 +389,12 @@ class PersonCounter:
         print("Nhan 'q' de thoat")
         print("Nhan 'r' de reset bo dem")
         print("Nhan 's' de bat/tat ghi video")
+        print("Nhan 'f' de bat/tat fullscreen")
+        
+        # Thiết lập cửa sổ
+        window_name = 'He thong dem nguoi - IN/OUT Counter'
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         
         while True:
             ret, frame = self.cap.read()
@@ -406,7 +418,7 @@ class PersonCounter:
                 self.video_writer.write(frame)
             
             # Hiển thị frame
-            cv2.imshow('He thong dem nguoi - IN/OUT Counter', frame)
+            cv2.imshow(window_name, frame)
             
             # Xử lý phím nhấn
             key = cv2.waitKey(1) & 0xFF
@@ -419,6 +431,15 @@ class PersonCounter:
                 print("Da reset bo dem!")
             elif key == ord('s'):
                 self.toggle_recording(fps, width, height)
+            elif key == ord('f'):
+                # Toggle fullscreen
+                current_prop = cv2.getWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN)
+                if current_prop == cv2.WINDOW_FULLSCREEN:
+                    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                    print("Tat fullscreen")
+                else:
+                    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    print("Bat fullscreen")
         
         # Dừng recording nếu đang ghi
         if self.is_recording:
